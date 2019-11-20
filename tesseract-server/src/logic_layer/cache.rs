@@ -307,6 +307,37 @@ pub fn populate_cache(
                             day_level = Some(level.clone());
                             day_values = Some(val);
                         }
+                    } else {
+                        // Identify if this is a time level based on the annotation name
+                        match &level.annotations {
+                            Some(annotations) => {
+                                for annotation in annotations {
+                                    if annotation.name == "level" && time_column_names.contains(&annotation.text) {
+                                        let val = get_distinct_values(
+                                            &level.key_column, &table, backend.clone(), sys
+                                        )?;
+
+                                        if annotation.text == "Year" {
+                                            year_level = Some(level.clone());
+                                            year_values = Some(val);
+                                        } else if annotation.text == "Quarter" {
+                                            quarter_level = Some(level.clone());
+                                            quarter_values = Some(val);
+                                        } else if annotation.text == "Month" {
+                                            month_level = Some(level.clone());
+                                            month_values = Some(val);
+                                        } else if annotation.text == "Week" {
+                                            week_level = Some(level.clone());
+                                            week_values = Some(val);
+                                        } else if annotation.text == "Day" {
+                                            day_level = Some(level.clone());
+                                            day_values = Some(val);
+                                        }
+                                    }
+                                }
+                            },
+                            None => ()
+                        }
                     }
 
                     // Get unique name for this level
