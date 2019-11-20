@@ -43,6 +43,12 @@ pub enum TimePrecision {
     Month,
     Week,
     Day,
+    // `Time` is a generic name that holds a column with a combination of time dimensions.
+    // For example, a time column my hold the value `201801` for January 2018.
+    // This allows for a but on the latest month of the latest year.
+    // This implementation is agnostic to what this column holds, as long as its level
+    // is named `Time`.
+    Time,
 }
 
 
@@ -54,6 +60,7 @@ impl TimePrecision {
             "month" => Ok(TimePrecision::Month),
             "week" => Ok(TimePrecision::Week),
             "day" => Ok(TimePrecision::Day),
+            "time" => Ok(TimePrecision::Time),
             _ => Err(format_err!("Wrong type for time precision argument."))
         }
     }
@@ -142,6 +149,9 @@ pub struct CubeCache {
     pub day_level: Option<Level>,
     pub day_values: Option<Vec<String>>,
 
+    pub time_level: Option<Level>,
+    pub time_values: Option<Vec<String>>,
+
     pub level_map: HashMap<String, LevelName>,
     pub property_map: HashMap<String, Property>,
 
@@ -179,6 +189,11 @@ impl CubeCache {
             TimePrecision::Day => {
                 let v = self.get_value(&time, self.day_values.clone());
                 let l = self.get_level_name(self.day_level.clone());
+                (v, l)
+            },
+            TimePrecision::Time => {
+                let v = self.get_value(&time, self.time_values.clone());
+                let l = self.get_level_name(self.time_level.clone());
                 (v, l)
             }
         };
@@ -272,6 +287,8 @@ pub fn populate_cache(
         let mut week_values: Option<Vec<String>> = None;
         let mut day_level: Option<Level> = None;
         let mut day_values: Option<Vec<String>> = None;
+        let mut time_level: Option<Level> = None;
+        let mut time_values: Option<Vec<String>> = None;
 
         let mut level_caches: HashMap<String, LevelCache> = HashMap::new();
         let mut dimension_caches: HashMap<String, DimensionCache> = HashMap::new();
@@ -280,66 +297,93 @@ pub fn populate_cache(
             let mut id_map: HashMap<String, Vec<LevelName>> = HashMap::new();
 
             for hierarchy in &dimension.hierarchies {
+                let table = &cube.table.name;
+
+                // Get the deepest level for this hierarchy.
+                // Time resolution helpers will be based on this level
+                let level = &hierarchy.levels[hierarchy.levels.len() - 1];
+
+                if time_column_names.contains(&level.name) {
+                    let val = get_distinct_values(
+                        &level.key_column, &table, backend.clone(), sys
+                    )?;
+
+                    if level.name == "Year" {
+                        year_level = Some(level.clone());
+                        year_values = Some(val);
+                    } else if level.name == "Quarter" {
+                        quarter_level = Some(level.clone());
+                        quarter_values = Some(val);
+                    } else if level.name == "Month" {
+                        month_level = Some(level.clone());
+                        month_values = Some(val);
+                    } else if level.name == "Week" {
+                        week_level = Some(level.clone());
+                        week_values = Some(val);
+                    } else if level.name == "Day" {
+                        day_level = Some(level.clone());
+                        day_values = Some(val);
+                    }
+                } else if level.name == "Time" {
+                    // Identify what time of level this is based on the annotation name
+                    let mut found_time = false;
+
+                    match &level.annotations {
+                        Some(annotations) => {
+                            for annotation in annotations {
+                                if annotation.name == "level" && time_column_names.contains(&annotation.text) {
+                                    let val = get_distinct_values(
+                                        &level.key_column, &table, backend.clone(), sys
+                                    )?;
+
+                                    if annotation.text == "Year" {
+                                        year_level = Some(level.clone());
+                                        year_values = Some(val);
+                                        found_time = true;
+                                    } else if annotation.text == "Quarter" {
+                                        quarter_level = Some(level.clone());
+                                        quarter_values = Some(val);
+                                        found_time = true;
+                                    } else if annotation.text == "Month" {
+                                        month_level = Some(level.clone());
+                                        month_values = Some(val);
+                                        found_time = true;
+                                    } else if annotation.text == "Week" {
+                                        week_level = Some(level.clone());
+                                        week_values = Some(val);
+                                        found_time = true;
+                                    } else if annotation.text == "Day" {
+                                        day_level = Some(level.clone());
+                                        day_values = Some(val);
+                                        found_time = true;
+                                    } else if annotation.text == "Time" {
+                                        time_level = Some(level.clone());
+                                        time_values = Some(val);
+                                        found_time = true;
+                                    }
+                                }
+                            }
+                        },
+                        None => ()
+                    }
+
+                    // Consider this to be a time generic Time level
+                    if !found_time {
+                        let val = get_distinct_values(
+                            &level.key_column, &table, backend.clone(), sys
+                        )?;
+
+                        time_level = Some(level.clone());
+                        time_values = Some(val);
+                    }
+                }
+
                 let table = match &hierarchy.table {
                     Some(t) => &t.name,
                     None => &cube.table.name
                 };
 
                 for level in &hierarchy.levels {
-                    if time_column_names.contains(&level.name) {
-                        let val = get_distinct_values(
-                            &level.key_column, &table, backend.clone(), sys
-                        )?;
-
-                        if level.name == "Year" {
-                            year_level = Some(level.clone());
-                            year_values = Some(val);
-                        } else if level.name == "Quarter" {
-                            quarter_level = Some(level.clone());
-                            quarter_values = Some(val);
-                        } else if level.name == "Month" {
-                            month_level = Some(level.clone());
-                            month_values = Some(val);
-                        } else if level.name == "Week" {
-                            week_level = Some(level.clone());
-                            week_values = Some(val);
-                        } else if level.name == "Day" {
-                            day_level = Some(level.clone());
-                            day_values = Some(val);
-                        }
-                    } else {
-                        // Identify if this is a time level based on the annotation name
-                        match &level.annotations {
-                            Some(annotations) => {
-                                for annotation in annotations {
-                                    if annotation.name == "level" && time_column_names.contains(&annotation.text) {
-                                        let val = get_distinct_values(
-                                            &level.key_column, &table, backend.clone(), sys
-                                        )?;
-
-                                        if annotation.text == "Year" {
-                                            year_level = Some(level.clone());
-                                            year_values = Some(val);
-                                        } else if annotation.text == "Quarter" {
-                                            quarter_level = Some(level.clone());
-                                            quarter_values = Some(val);
-                                        } else if annotation.text == "Month" {
-                                            month_level = Some(level.clone());
-                                            month_values = Some(val);
-                                        } else if annotation.text == "Week" {
-                                            week_level = Some(level.clone());
-                                            week_values = Some(val);
-                                        } else if annotation.text == "Day" {
-                                            day_level = Some(level.clone());
-                                            day_values = Some(val);
-                                        }
-                                    }
-                                }
-                            },
-                            None => ()
-                        }
-                    }
-
                     // Get unique name for this level
                     let unique_name = match get_unique_level_name(&cube, ll_config, &level)? {
                         Some(name) => name,
@@ -449,6 +493,8 @@ pub fn populate_cache(
             week_values,
             day_level,
             day_values,
+            time_level,
+            time_values,
             level_map,
             property_map,
             level_caches,
